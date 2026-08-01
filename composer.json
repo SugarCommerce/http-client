@@ -1,0 +1,27 @@
+{
+  "name": "sugarmill/http-client",
+  "version": "1.0.0",
+  "description": "Outbound HTTP client with SSRF protection on by default. Validates and pins the target address, re-validates every redirect hop, and caps response size. Zero dependencies.",
+  "type": "library",
+  "license": "GPL-2.0-or-later",
+  "homepage": "https://github.com/sugarmill/http-client",
+  "authors": [
+    { "name": "David Sherlock", "homepage": "https://arraypress.com/" }
+  ],
+  "keywords": ["http", "curl", "ssrf", "security", "client", "webhooks", "outbound"],
+  "require": { "php": ">=8.5", "ext-curl": "*" },
+  "require-dev": { "phpunit/phpunit": "^13.0" },
+  "autoload": { "psr-4": { "SugarMill\\HttpClient\\": "src/" } },
+  "autoload-dev": { "psr-4": { "SugarMill\\HttpClient\\Tests\\": "tests/" } },
+  "scripts": {
+    "test": "phpunit",
+    "bench": "php -d opcache.enable_cli=1 bench/run.php"
+  },
+  "config": { "optimize-autoloader": true, "sort-packages": true, "preferred-install": "dist" },
+  "minimum-stability": "stable",
+  "prefer-stable": true,
+  "support": {
+    "issues": "https://github.com/sugarmill/http-client/issues",
+    "source": "https://github.com/sugarmill/http-client"
+  }
+}
