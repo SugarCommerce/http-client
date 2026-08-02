@@ -7,7 +7,7 @@
  * connection pinning, size caps, timeouts — only exist at the transport
  * layer. A mock would test the mock.
  *
- * @package   SugarMill\HttpClient
+ * @package   Sugar\HttpClient
  * @copyright Copyright (c) 2026, ArrayPress Limited
  * @license   GPL-2.0-or-later
  * @since     1.0.0
@@ -15,13 +15,13 @@
 
 declare( strict_types=1 );
 
-namespace SugarMill\HttpClient\Tests;
+namespace Sugar\HttpClient\Tests;
 
 use PHPUnit\Framework\Attributes\AfterClass;
 use PHPUnit\Framework\Attributes\BeforeClass;
 use PHPUnit\Framework\TestCase;
-use SugarMill\HttpClient\Client;
-use SugarMill\HttpClient\SsrfPolicy;
+use Sugar\HttpClient\Client;
+use Sugar\HttpClient\SsrfPolicy;
 
 final class ClientTest extends TestCase {
 

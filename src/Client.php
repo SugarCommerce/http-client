@@ -2,7 +2,7 @@
 /**
  * SSRF-guarded outbound HTTP client.
  *
- * @package   SugarMill\HttpClient
+ * @package   Sugar\HttpClient
  * @copyright Copyright (c) 2026, ArrayPress Limited
  * @license   GPL-2.0-or-later
  * @since     1.0.0
@@ -10,7 +10,7 @@
 
 declare( strict_types=1 );
 
-namespace SugarMill\HttpClient;
+namespace Sugar\HttpClient;
 
 /**
  * Class Client
@@ -67,7 +67,7 @@ final readonly class Client {
 		public int $timeout = 10,
 		public int $max_redirects = 0,
 		public int $max_bytes = 0,
-		public string $user_agent = 'sugarmill-http-client/1.0',
+		public string $user_agent = 'sugarcommerce-http-client/1.0',
 		public ?SsrfPolicy $ssrf = new SsrfPolicy(),
 		public array $default_headers = array(),
 	) {}

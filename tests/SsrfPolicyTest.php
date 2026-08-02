@@ -2,7 +2,7 @@
 /**
  * SsrfPolicy test suite.
  *
- * @package   SugarMill\HttpClient
+ * @package   Sugar\HttpClient
  * @copyright Copyright (c) 2026, ArrayPress Limited
  * @license   GPL-2.0-or-later
  * @since     1.0.0
@@ -10,11 +10,11 @@
 
 declare( strict_types=1 );
 
-namespace SugarMill\HttpClient\Tests;
+namespace Sugar\HttpClient\Tests;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use SugarMill\HttpClient\SsrfPolicy;
+use Sugar\HttpClient\SsrfPolicy;
 
 final class SsrfPolicyTest extends TestCase {
 
