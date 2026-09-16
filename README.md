@@ -31,7 +31,7 @@ composer require sugarcommerce/http-client
 ## Usage
 
 ```php
-use Sugar\HttpClient\Client;
+use SugarCommerce\HttpClient\Client;
 
 $client   = new Client();
 $response = $client->get( 'https://api.example.com/things' );
@@ -88,7 +88,7 @@ $client = ( new Client() )->without_ssrf();
 ### Tuning the policy
 
 ```php
-use Sugar\HttpClient\SsrfPolicy;
+use SugarCommerce\HttpClient\SsrfPolicy;
 
 new SsrfPolicy( allowed_ports: [ 80, 443, 8080 ] );
 SsrfPolicy::permissive();   // private addresses + any port — dev and tests only

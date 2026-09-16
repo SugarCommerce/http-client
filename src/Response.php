@@ -2,7 +2,7 @@
 /**
  * An HTTP response, or the reason there wasn't one.
  *
- * @package   Sugar\HttpClient
+ * @package   SugarCommerce\HttpClient
  * @copyright Copyright (c) 2026, ArrayPress Limited
  * @license   GPL-2.0-or-later
  * @since     1.0.0
@@ -10,7 +10,7 @@
 
 declare( strict_types=1 );
 
-namespace Sugar\HttpClient;
+namespace SugarCommerce\HttpClient;
 
 /**
  * Class Response
