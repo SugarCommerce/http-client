@@ -1,6 +1,6 @@
 {
   "name": "sugarcommerce/http-client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Outbound HTTP client with SSRF protection on by default. Validates and pins the target address, re-validates every redirect hop, and caps response size. Zero dependencies.",
   "type": "library",
   "license": "GPL-2.0-or-later",

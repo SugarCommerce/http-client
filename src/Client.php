@@ -39,7 +39,7 @@ namespace SugarCommerce\HttpClient;
  *
  * @since 1.0.0
  */
-final readonly class Client {
+readonly class Client {
 
 	/**
 	 * Protocols curl may speak, for the request and any redirect.
