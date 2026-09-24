@@ -94,6 +94,24 @@ new SsrfPolicy( allowed_ports: [ 80, 443, 8080 ] );
 SsrfPolicy::permissive();   // private addresses + any port — dev and tests only
 ```
 
+### Faking it in tests
+
+`Fake` extends `Client`, so anything that takes a client takes it. It never touches the network and records every request.
+
+```php
+use SugarCommerce\HttpClient\{Fake, Response};
+
+$http = ( new Fake() )
+    ->on( 'GET', 'https://api.example.com/things/*', new Response( true, 200, '{"id":1}' ) )
+    ->on( 'POST', '*', Response::failure( 'timeout' ), times: 2 )   // an outage, then…
+    ->queue( new Response( true, 201 ) );                            // …the next unrouted answer
+
+$http->sent( 'POST', 'https://api.example.com/*' );  // [ [method, url, body, headers], … ]
+$http->methods();                                    // [ 'GET', 'POST', … ]
+```
+
+A request is answered by the first matching route with uses left, then the next queued answer, then a bare `200`. `Fake::strict()` fails unscripted requests instead, so a test cannot pass on a call it never meant to make. The `with_*()` copies return the fake itself rather than a real client.
+
 ## What the policy blocks
 
 | | Examples |
