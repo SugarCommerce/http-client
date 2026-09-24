@@ -30,9 +30,9 @@ namespace SugarCommerce\HttpClient;
  * the strength of a call it never meant to make.
  *
  * Every consumer used to write its own double, and each one learned the same
- * two lessons separately: the with_*() copies build a new *parent*, which
- * quietly puts the real client back, and a readonly class can only record
- * into an object it already holds. Both are handled here once.
+ * lesson separately: a readonly class can only record into an object it
+ * already holds. Its copies — with_timeout() and the rest — are clones, so
+ * they are this fake too, and record into the same log.
  *
  * @since 1.2.0
  */
@@ -159,84 +159,6 @@ final readonly class Fake extends Client {
 		return array_column( $this->requests->getArrayCopy(), 'method' );
 	}
 
-	/* ─── Configuration is kept, not rebuilt ────────────────────────── */
-
-	/**
-	 * This fake. The parent's copy would be a real client.
-	 *
-	 * @since 1.2.0
-	 *
-	 * @param int $seconds Ignored.
-	 *
-	 * @return self
-	 */
-	public function with_timeout( int $seconds ): self {
-		return $this;
-	}
-
-	/**
-	 * This fake. The parent's copy would be a real client.
-	 *
-	 * @since 1.2.0
-	 *
-	 * @param int $max Ignored.
-	 *
-	 * @return self
-	 */
-	public function following_redirects( int $max = 3 ): self {
-		return $this;
-	}
-
-	/**
-	 * This fake. The parent's copy would be a real client.
-	 *
-	 * @since 1.2.0
-	 *
-	 * @param int $bytes Ignored.
-	 *
-	 * @return self
-	 */
-	public function with_max_bytes( int $bytes ): self {
-		return $this;
-	}
-
-	/**
-	 * This fake. The parent's copy would be a real client.
-	 *
-	 * @since 1.2.0
-	 *
-	 * @param array<string, string> $headers Ignored.
-	 *
-	 * @return self
-	 */
-	public function with_headers( array $headers ): self {
-		return $this;
-	}
-
-	/**
-	 * This fake. The parent's copy would be a real client.
-	 *
-	 * @since 1.2.0
-	 *
-	 * @return self
-	 */
-	public function without_ssrf(): self {
-		return $this;
-	}
-
-	/**
-	 * This fake. The parent's copy would be a real client.
-	 *
-	 * @since 1.2.0
-	 *
-	 * @param SsrfPolicy $policy Ignored.
-	 *
-	 * @return self
-	 */
-	public function with_ssrf_policy( SsrfPolicy $policy ): self {
-		return $this;
-	}
-
 	/* ─── Engine ────────────────────────────────────────────────────── */
 
 	/**
@@ -254,6 +176,7 @@ final readonly class Fake extends Client {
 	 *
 	 * @return Response
 	 */
+	#[\Override]
 	public function request( string $method, string $url, ?string $body = null, array $headers = array() ): Response {
 		$method = strtoupper( $method );
 

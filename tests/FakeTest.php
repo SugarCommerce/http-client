@@ -105,12 +105,16 @@ final class FakeTest extends TestCase {
 	}
 
 	/**
-	 * Client's copies are built with `new self`, which from a subclass is the
-	 * real client — a double that forgot this sent real requests.
+	 * Client's copies used to be built with `new self`, which from a subclass
+	 * is the real client — a double asked for a shorter timeout sent real
+	 * requests. They are clones now.
 	 */
-	public function test_configured_copies_are_still_the_fake(): void {
-		$http = new Fake();
+	public function test_configured_copies_are_still_the_fake_and_share_its_log(): void {
+		$http = ( new Fake() )->on( 'GET', '*', new Response( true, 207 ) );
+		$copy = $http->with_timeout( 1 )->following_redirects()->with_max_bytes( 1 )->with_headers( array( 'X-A' => '1' ) )->without_ssrf();
 
-		$this->assertSame( $http, $http->with_timeout( 1 )->following_redirects()->with_max_bytes( 1 )->with_headers( array() )->without_ssrf() );
+		$this->assertInstanceOf( Fake::class, $copy );
+		$this->assertSame( 207, $copy->get( 'https://a.test/' )->status, 'The script came with it.' );
+		$this->assertCount( 1, $http->requests, 'And the original sees what the copy sent.' );
 	}
 }

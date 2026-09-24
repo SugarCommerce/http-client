@@ -278,4 +278,26 @@ final class ClientTest extends TestCase {
 
 		$this->assertStringContainsString( 'yes', $response->body );
 	}
+
+	/* ─── Copies (1.3.0) ─────────────────────────────────────────── */
+
+	public function test_a_copy_changes_one_thing_and_keeps_the_rest(): void {
+		$client = new Client( timeout: 5, max_bytes: 100, default_headers: array( 'X-A' => '1' ) );
+		$copy   = $client->with_timeout( 9 )->with_headers( array( 'X-B' => '2' ) );
+
+		$this->assertSame( 9, $copy->timeout );
+		$this->assertSame( 100, $copy->max_bytes );
+		$this->assertSame( array( 'X-B' => '2', 'X-A' => '1' ), $copy->default_headers );
+		$this->assertSame( 5, $client->timeout, 'The original is untouched.' );
+		$this->assertNull( $client->without_ssrf()->ssrf );
+	}
+
+	public function test_a_subclass_copy_is_still_the_subclass(): void {
+		$this->assertInstanceOf( SubclassedClient::class, ( new SubclassedClient() )->with_timeout( 1 )->without_ssrf() );
+	}
 }
+
+/**
+ * A client that is not Client, for the copy test.
+ */
+final readonly class SubclassedClient extends Client {}

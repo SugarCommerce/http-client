@@ -74,6 +74,11 @@ readonly class Client {
 
 	/* ─── Configuration ─────────────────────────────────────────────── */
 
+	// Every copy below is a clone with one property changed, not a new
+	// instance: `new self` from a subclass builds the parent, so a test double
+	// asked for a copy with a shorter timeout quietly became the real client
+	// and sent real requests. A clone is whatever it was cloned from.
+
 	/**
 	 * A copy with a different timeout.
 	 *
@@ -81,10 +86,10 @@ readonly class Client {
 	 *
 	 * @param int $seconds Timeout.
 	 *
-	 * @return self
+	 * @return static
 	 */
-	public function with_timeout( int $seconds ): self {
-		return new self( $seconds, $this->max_redirects, $this->max_bytes, $this->user_agent, $this->ssrf, $this->default_headers );
+	public function with_timeout( int $seconds ): static {
+		return clone( $this, array( 'timeout' => $seconds ) );
 	}
 
 	/**
@@ -94,10 +99,10 @@ readonly class Client {
 	 *
 	 * @param int $max Hops to follow.
 	 *
-	 * @return self
+	 * @return static
 	 */
-	public function following_redirects( int $max = 3 ): self {
-		return new self( $this->timeout, $max, $this->max_bytes, $this->user_agent, $this->ssrf, $this->default_headers );
+	public function following_redirects( int $max = 3 ): static {
+		return clone( $this, array( 'max_redirects' => $max ) );
 	}
 
 	/**
@@ -107,10 +112,10 @@ readonly class Client {
 	 *
 	 * @param int $bytes Cap.
 	 *
-	 * @return self
+	 * @return static
 	 */
-	public function with_max_bytes( int $bytes ): self {
-		return new self( $this->timeout, $this->max_redirects, $bytes, $this->user_agent, $this->ssrf, $this->default_headers );
+	public function with_max_bytes( int $bytes ): static {
+		return clone( $this, array( 'max_bytes' => $bytes ) );
 	}
 
 	/**
@@ -120,10 +125,10 @@ readonly class Client {
 	 *
 	 * @param array<string, string> $headers Merged over the existing set.
 	 *
-	 * @return self
+	 * @return static
 	 */
-	public function with_headers( array $headers ): self {
-		return new self( $this->timeout, $this->max_redirects, $this->max_bytes, $this->user_agent, $this->ssrf, $headers + $this->default_headers );
+	public function with_headers( array $headers ): static {
+		return clone( $this, array( 'default_headers' => $headers + $this->default_headers ) );
 	}
 
 	/**
@@ -135,10 +140,10 @@ readonly class Client {
 	 *
 	 * @since 1.0.0
 	 *
-	 * @return self
+	 * @return static
 	 */
-	public function without_ssrf(): self {
-		return new self( $this->timeout, $this->max_redirects, $this->max_bytes, $this->user_agent, null, $this->default_headers );
+	public function without_ssrf(): static {
+		return clone( $this, array( 'ssrf' => null ) );
 	}
 
 	/**
@@ -148,10 +153,10 @@ readonly class Client {
 	 *
 	 * @param SsrfPolicy $policy Replacement policy.
 	 *
-	 * @return self
+	 * @return static
 	 */
-	public function with_ssrf_policy( SsrfPolicy $policy ): self {
-		return new self( $this->timeout, $this->max_redirects, $this->max_bytes, $this->user_agent, $policy, $this->default_headers );
+	public function with_ssrf_policy( SsrfPolicy $policy ): static {
+		return clone( $this, array( 'ssrf' => $policy ) );
 	}
 
 	/* ─── Verbs ─────────────────────────────────────────────────────── */

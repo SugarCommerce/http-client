@@ -110,7 +110,7 @@ $http->sent( 'POST', 'https://api.example.com/*' );  // [ [method, url, body, he
 $http->methods();                                    // [ 'GET', 'POST', … ]
 ```
 
-A request is answered by the first matching route with uses left, then the next queued answer, then a bare `200`. `Fake::strict()` fails unscripted requests instead, so a test cannot pass on a call it never meant to make. The `with_*()` copies return the fake itself rather than a real client.
+A request is answered by the first matching route with uses left, then the next queued answer, then a bare `200`. `Fake::strict()` fails unscripted requests instead, so a test cannot pass on a call it never meant to make. The `with_*()` copies are clones, so a copy of a fake is still the fake and records into the same log.
 
 ## What the policy blocks
 
