@@ -39,6 +39,11 @@ namespace SugarCommerce\HttpClient;
 final readonly class Fake extends Client {
 
 	/**
+	 * Bytes per chunk when a scripted body is played into a stream() sink.
+	 */
+	public const int CHUNK = 8192;
+
+	/**
 	 * Every request, in order.
 	 *
 	 * @var \ArrayObject<int, array{method: string, url: string, body: string|null, headers: array<string, string>}>
@@ -189,6 +194,38 @@ final readonly class Fake extends Client {
 		}
 
 		return $answer ?? Response::failure( 'unscripted: ' . $method . ' ' . $url );
+	}
+
+	/**
+	 * Record a streamed GET and play the scripted body into the sink.
+	 *
+	 * Answered from the same script as a GET, and recorded as one. Only a
+	 * 2xx body is played, in chunks, the way Client passes one on; anything
+	 * else comes back as it was scripted and the sink is never called — so a
+	 * test of an error path sees exactly what production would.
+	 *
+	 * @since 1.4.0
+	 *
+	 * @param string                $url     URL.
+	 * @param \Closure              $sink    Receives each chunk of a 2xx body.
+	 * @param array<string, string> $headers Extra headers.
+	 *
+	 * @return Response The scripted answer, with the body taken out when it
+	 *                  went to the sink.
+	 */
+	#[\Override]
+	public function stream( string $url, \Closure $sink, array $headers = array() ): Response {
+		$answer = $this->request( 'GET', $url, null, $headers );
+
+		if ( ! $answer->ok ) {
+			return $answer;
+		}
+
+		foreach ( '' === $answer->body ? array() : str_split( $answer->body, self::CHUNK ) as $chunk ) {
+			$sink( $chunk );
+		}
+
+		return new Response( true, $answer->status, '', $answer->content_type, '', $answer->headers, $answer->duration, $answer->final_url );
 	}
 
 	/**

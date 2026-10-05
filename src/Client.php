@@ -44,7 +44,12 @@ readonly class Client {
 	/**
 	 * Protocols curl may speak, for the request and any redirect.
 	 */
-	private const PROTOCOLS = CURLPROTO_HTTP | CURLPROTO_HTTPS;
+	private const int PROTOCOLS = CURLPROTO_HTTP | CURLPROTO_HTTPS;
+
+	/**
+	 * Most of a non-2xx body stream() keeps, for saying what went wrong.
+	 */
+	private const int KEPT = 65536;
 
 	/**
 	 * @since 1.0.0
@@ -253,6 +258,43 @@ readonly class Client {
 		return $this->request( 'HEAD', $url, null, $headers );
 	}
 
+	/**
+	 * GET a URL and hand its body over as it arrives, instead of keeping it.
+	 *
+	 * For bodies too big to hold — a file being passed through to a browser,
+	 * a member being written into an archive. The same guard as every other
+	 * verb: the target is validated, the connection is pinned to the address
+	 * that was validated, and each redirect hop goes back through the policy.
+	 * Opening the URL with fopen() instead would check one DNS answer and
+	 * then connect to whatever the next one says.
+	 *
+	 * Only a 2xx body reaches the sink. An error document, or the body of a
+	 * redirect, is never written into somebody's download; up to 64 KiB of
+	 * it is kept on the Response instead, for the log. So a sink that has not
+	 * been called by the time this returns means nothing was passed on —
+	 * which is the moment a caller can still answer with an error of its own.
+	 *
+	 * The timeout bounds connecting, and any stretch that long with no bytes
+	 * at all; it does not bound the transfer, which takes as long as the file
+	 * is big. The size cap, when set, still aborts mid-transfer.
+	 *
+	 * @since 1.4.0
+	 *
+	 * @param string                $url     URL.
+	 * @param \Closure              $sink    Called with each chunk of a 2xx body,
+	 *                                       in order: `function ( string $chunk ): void`.
+	 * @param array<string, string> $headers Extra headers, e.g. a Range.
+	 *
+	 * @return Response Status and headers. The body is empty when it went to
+	 *                  the sink. `ok` is false when the transfer failed,
+	 *                  including partway through — by then the sink has had
+	 *                  some of the bytes, and the caller decides what a
+	 *                  partial body means.
+	 */
+	public function stream( string $url, \Closure $sink, array $headers = array() ): Response {
+		return $this->send( 'GET', $url, null, $headers, $sink );
+	}
+
 	/* ─── Engine ────────────────────────────────────────────────────── */
 
 	/**
@@ -272,6 +314,24 @@ readonly class Client {
 	 * @return Response
 	 */
 	public function request( string $method, string $url, ?string $body = null, array $headers = array() ): Response {
+		return $this->send( $method, $url, $body, $headers, null );
+	}
+
+	/**
+	 * Perform a request, keeping the body or handing it to a sink.
+	 *
+	 * @since 1.4.0
+	 *
+	 * @param string                $method  HTTP verb.
+	 * @param string                $url     URL.
+	 * @param string|null           $body    Request body.
+	 * @param array<string, string> $headers Extra headers.
+	 * @param \Closure|null         $sink    Receives a 2xx body as it arrives,
+	 *                                       or null to keep it.
+	 *
+	 * @return Response
+	 */
+	private function send( string $method, string $url, ?string $body, array $headers, ?\Closure $sink ): Response {
 		$method  = strtoupper( $method );
 		$current = $url;
 		$started = microtime( true );
@@ -289,7 +349,7 @@ readonly class Client {
 				$pinned = $check;
 			}
 
-			$result = $this->execute( $method, $current, $body, $headers, $pinned );
+			$result = $this->execute( $method, $current, $body, $headers, $pinned, $sink );
 
 			$is_redirect = $result['status'] >= 300 && $result['status'] < 400 && '' !== $result['location'];
 
@@ -332,7 +392,7 @@ readonly class Client {
 
 			$response_body = (string) $result['body'];
 
-			if ( $this->max_bytes > 0 && strlen( $response_body ) > $this->max_bytes ) {
+			if ( null === $sink && $this->max_bytes > 0 && strlen( $response_body ) > $this->max_bytes ) {
 				return new Response( false, $result['status'], error: 'response exceeds size limit', duration: $duration, final_url: $current );
 			}
 
@@ -363,12 +423,14 @@ readonly class Client {
 	 * @param string|null           $body    Body.
 	 * @param array<string, string> $headers Extra headers.
 	 * @param SsrfResult|null       $pinned  Validated target, when guarded.
+	 * @param \Closure|null         $sink    Receives a 2xx body as it arrives.
 	 *
 	 * @return array{status:int, body:string|false, content_type:string, error:string, location:string, headers:array<string,string>}
 	 */
-	private function execute( string $method, string $url, ?string $body, array $headers, ?SsrfResult $pinned ): array {
-		$handle          = curl_init( $url );
+	private function execute( string $method, string $url, ?string $body, array $headers, ?SsrfResult $pinned, ?\Closure $sink = null ): array {
+		$handle           = curl_init( $url );
 		$response_headers = array();
+		$kept             = '';
 
 		$options = array(
 			CURLOPT_CUSTOMREQUEST   => $method,
@@ -407,6 +469,28 @@ readonly class Client {
 			$options[ CURLOPT_RESOLVE ] = array( $pinned->resolve_entry() );
 		}
 
+		if ( null !== $sink ) {
+			// A transfer is as long as the file is big, so the timeout
+			// bounds connecting and stalling rather than the whole thing.
+			$options[ CURLOPT_RETURNTRANSFER ]  = false;
+			$options[ CURLOPT_TIMEOUT ]         = 0;
+			$options[ CURLOPT_LOW_SPEED_LIMIT ] = 1;
+			$options[ CURLOPT_LOW_SPEED_TIME ]  = max( 1, $this->timeout );
+			$options[ CURLOPT_WRITEFUNCTION ]   = static function ( $handle, string $chunk ) use ( $sink, &$kept ): int {
+				$status = (int) curl_getinfo( $handle, CURLINFO_RESPONSE_CODE );
+
+				if ( $status >= 200 && $status < 300 ) {
+					$sink( $chunk );
+				} elseif ( strlen( $kept ) < self::KEPT ) {
+					// Not the body anybody asked for: an error document, or
+					// a redirect's. Kept, briefly, to say what went wrong.
+					$kept .= substr( $chunk, 0, self::KEPT - strlen( $kept ) );
+				}
+
+				return strlen( $chunk );
+			};
+		}
+
 		if ( $this->max_bytes > 0 ) {
 			// Abort mid-transfer rather than buffering an oversized body
 			// and checking its length afterwards.
@@ -420,7 +504,11 @@ readonly class Client {
 		$result = curl_exec( $handle );
 		$out    = array(
 			'status'       => (int) curl_getinfo( $handle, CURLINFO_HTTP_CODE ),
-			'body'         => is_string( $result ) ? $result : false,
+			// Streamed, curl_exec() answers true or false and the body has
+			// gone to the sink; what is left is anything not passed on.
+			'body'         => null !== $sink
+				? ( true === $result ? $kept : false )
+				: ( is_string( $result ) ? $result : false ),
 			'content_type' => strtok( (string) curl_getinfo( $handle, CURLINFO_CONTENT_TYPE ), ';' ) ?: '',
 			'error'        => curl_error( $handle ),
 			'location'     => (string) curl_getinfo( $handle, CURLINFO_REDIRECT_URL ),

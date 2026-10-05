@@ -15,6 +15,7 @@ Guzzle doesn't guard against this. Neither does `file_get_contents`. Here it's t
 - 🔀 **Per-hop redirect validation** — every hop goes back through the policy, which `CURLOPT_FOLLOWLOCATION` cannot do.
 - 🔌 **Port allowlist** — a public IP on `:6379` is still somebody's Redis.
 - 📏 **Size caps** — aborts mid-transfer instead of buffering an oversized body.
+- 🚰 **Streaming** — `stream()` hands a body over as it arrives, with the same guard and pinning; an error document never reaches the sink.
 - 🚫 **Never throws for transport errors** — a refused connection is a normal outcome, not an exception.
 - 🧾 **Typed response** — `ok`, `status`, `json()`, `header()`, and error-class predicates.
 
@@ -41,7 +42,28 @@ if ( $response->ok ) {
 }
 ```
 
-Verbs: `get()`, `post()`, `post_json()`, `put()`, `delete()`, `head()`, or `request()` for anything else.
+Verbs: `get()`, `post()`, `post_json()`, `put()`, `delete()`, `head()`, or `request()` for anything else — and `stream()` for a body too big to hold.
+
+### Streaming
+
+For a body you pass on rather than keep — a file proxied to a browser, a member written into a zip:
+
+```php
+$response = $client->stream( $presigned_url, static function ( string $chunk ): void {
+    echo $chunk;
+    flush();
+} );
+
+if ( ! $response->ok ) {
+    error_log( 'Stream failed: ' . $response->error );
+}
+```
+
+The guard is the same as for every other verb: the target is validated, the connection is pinned to the address that was validated, and redirects are re-validated per hop. `fopen( $url )` cannot do the middle part — it checks nothing, and if you check first it connects to whatever DNS says the second time.
+
+Only a **2xx** body reaches the sink. An error document or a redirect's body is kept on the `Response` (up to 64 KiB) instead of being written into somebody's download, so a sink that was never called means nothing went out, and you can still answer with an error of your own. Send your own headers from the first call of the sink, not before.
+
+The timeout bounds connecting and any stall of that length; it does not bound the transfer, which takes as long as the file is big. `with_max_bytes()` still cuts it off mid-transfer.
 
 ### Responses
 
@@ -110,6 +132,8 @@ $http->sent( 'POST', 'https://api.example.com/*' );  // [ [method, url, body, he
 $http->methods();                                    // [ 'GET', 'POST', … ]
 ```
 
+`stream()` on a fake is answered from the same script as a `GET`, and a 2xx body is played into the sink in `Fake::CHUNK`-sized pieces; anything else comes back as scripted and the sink is never called.
+
 A request is answered by the first matching route with uses left, then the next queued answer, then a bare `200`. `Fake::strict()` fails unscripted requests instead, so a test cannot pass on a call it never meant to make. The `with_*()` copies are clones, so a copy of a fake is still the fake and records into the same log.
 
 ## What the policy blocks
@@ -133,7 +157,7 @@ Three of those are worth calling out because they're routinely missed:
 
 **NAT64 and 6to4 embed IPv4 inside IPv6.** `64:ff9b::a00:1` reaches `10.0.0.1`, and PHP's own filters consider it perfectly public.
 
-**Validation alone is not enough.** DNS can answer differently between the check and the connection — that *is* DNS rebinding. The connection is pinned to the validated address via `CURLOPT_RESOLVE`.
+**Validation alone is not enough.** DNS can answer differently between the check and the connection — that *is* DNS rebinding. The connection is pinned to the validated address via `CURLOPT_RESOLVE` — with an IPv6 address bracketed (`host:443:[2001:db8::1]`), the form curl documents. `SsrfResult::resolve_entry()` builds that entry, so anything else pinning a connection uses the same one rather than its own.
 
 ## Testing
 
@@ -142,7 +166,7 @@ composer install
 composer test
 ```
 
-78 tests, run against a real PHP built-in server rather than a mocked transport — redirect handling, size caps, timeouts and pinning only exist at the transport layer, and a mock would just test the mock.
+102 tests, run against a real PHP built-in server rather than a mocked transport — redirect handling, size caps, timeouts, streaming and pinning only exist at the transport layer, and a mock would just test the mock.
 
 ## License
 

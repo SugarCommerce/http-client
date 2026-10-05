@@ -117,4 +117,32 @@ final class FakeTest extends TestCase {
 		$this->assertSame( 207, $copy->get( 'https://a.test/' )->status, 'The script came with it.' );
 		$this->assertCount( 1, $http->requests, 'And the original sees what the copy sent.' );
 	}
+
+	/* ─── Streaming (1.4.0) ─────────────────────────────────────────── */
+
+	public function test_a_stream_plays_the_scripted_body_into_the_sink(): void {
+		$body     = str_repeat( 'x', Fake::CHUNK * 2 + 5 );
+		$http     = ( new Fake() )->on( 'GET', 'https://a.test/file', new Response( true, 206, $body, headers: array( 'etag' => '"e"' ) ) );
+		$chunks   = array();
+		$response = $http->stream( 'https://a.test/file', function ( string $chunk ) use ( &$chunks ): void {
+			$chunks[] = $chunk;
+		}, array( 'Range' => 'bytes=0-' ) );
+
+		$this->assertSame( $body, implode( '', $chunks ) );
+		$this->assertCount( 3, $chunks );
+		$this->assertSame( '', $response->body );
+		$this->assertSame( 206, $response->status );
+		$this->assertSame( '"e"', $response->header( 'etag' ) );
+		$this->assertSame( 'bytes=0-', $http->sent( 'GET' )[0]['headers']['Range'], 'Recorded as a GET.' );
+	}
+
+	public function test_a_failed_stream_never_calls_the_sink(): void {
+		$called   = false;
+		$response = ( new Fake() )->on( 'GET', '*', new Response( false, 404, '<Error/>' ) )->stream( 'https://a.test/', function () use ( &$called ): void {
+			$called = true;
+		} );
+
+		$this->assertFalse( $called );
+		$this->assertSame( '<Error/>', $response->body );
+	}
 }

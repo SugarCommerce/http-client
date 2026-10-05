@@ -295,6 +295,101 @@ final class ClientTest extends TestCase {
 	public function test_a_subclass_copy_is_still_the_subclass(): void {
 		$this->assertInstanceOf( SubclassedClient::class, ( new SubclassedClient() )->with_timeout( 1 )->without_ssrf() );
 	}
+
+	/* ─── Streaming (1.4.0) ─────────────────────────────────────────── */
+
+	public function test_a_stream_hands_the_body_over_in_pieces(): void {
+		$chunks   = array();
+		$response = $this->client()->stream( $this->url( 'big.php?kb=256' ), function ( string $chunk ) use ( &$chunks ): void {
+			$chunks[] = $chunk;
+		} );
+
+		$this->assertTrue( $response->ok );
+		$this->assertSame( 200, $response->status );
+		$this->assertSame( '', $response->body, 'Nothing is kept.' );
+		$this->assertSame( 256 * 1024, strlen( implode( '', $chunks ) ) );
+		$this->assertGreaterThan( 1, count( $chunks ) );
+		$this->assertSame( 'text/plain', $response->content_type );
+	}
+
+	public function test_a_stream_sends_the_headers_it_is_given(): void {
+		$body = '';
+
+		$this->client()->stream( $this->url( 'echo.php' ), function ( string $chunk ) use ( &$body ): void {
+			$body .= $chunk;
+		}, array( 'X-Range-Ish' => 'bytes=0-0' ) );
+
+		$this->assertStringContainsString( 'bytes=0-0', $body );
+	}
+
+	/**
+	 * An error document written into somebody's download is the bug this
+	 * exists to prevent.
+	 */
+	public function test_an_error_body_never_reaches_the_sink(): void {
+		$called   = false;
+		$response = $this->client()->stream( $this->url( 'status.php?code=404' ), function () use ( &$called ): void {
+			$called = true;
+		} );
+
+		$this->assertFalse( $called );
+		$this->assertFalse( $response->ok );
+		$this->assertSame( 404, $response->status );
+		$this->assertSame( 'status body', $response->body, 'Kept for the log instead.' );
+	}
+
+	public function test_a_redirect_is_not_streamed_or_followed_by_default(): void {
+		$called   = false;
+		$response = $this->client()->stream( $this->url( 'redirect.php' ), function () use ( &$called ): void {
+			$called = true;
+		} );
+
+		$this->assertFalse( $called );
+		$this->assertSame( 302, $response->status );
+	}
+
+	public function test_a_followed_redirect_streams_the_destination(): void {
+		$body     = '';
+		$response = $this->client()->following_redirects( 2 )->stream( $this->url( 'redirect.php?to=/json.php' ), function ( string $chunk ) use ( &$body ): void {
+			$body .= $chunk;
+		} );
+
+		$this->assertTrue( $response->ok );
+		$this->assertSame( array( 'ok' => true, 'value' => 42 ), json_decode( $body, true ) );
+	}
+
+	public function test_a_stream_is_guarded_like_every_other_request(): void {
+		$called   = false;
+		$response = ( new Client() )->stream( $this->url( 'big.php' ), function () use ( &$called ): void {
+			$called = true;
+		} );
+
+		$this->assertFalse( $called );
+		$this->assertFalse( $response->ok );
+		$this->assertStringStartsWith( 'blocked:', $response->error );
+	}
+
+	public function test_a_stream_over_the_cap_is_cut_off(): void {
+		$bytes    = 0;
+		$response = $this->client()->with_max_bytes( 16 * 1024 )->stream( $this->url( 'big.php?kb=1024' ), function ( string $chunk ) use ( &$bytes ): void {
+			$bytes += strlen( $chunk );
+		} );
+
+		$this->assertFalse( $response->ok );
+		$this->assertLessThan( 1024 * 1024, $bytes );
+	}
+
+	public function test_a_stream_is_not_bounded_by_the_timeout_while_bytes_flow(): void {
+		$body     = '';
+		// Six bytes, 0.4 seconds apart: two seconds in all, against a
+		// one-second timeout that a non-streamed request would hit.
+		$response = ( new Client( timeout: 1, ssrf: SsrfPolicy::permissive() ) )->stream( $this->url( 'trickle.php?bytes=6&ms=400' ), function ( string $chunk ) use ( &$body ): void {
+			$body .= $chunk;
+		} );
+
+		$this->assertTrue( $response->ok, $response->error );
+		$this->assertSame( 'abcdef', $body );
+	}
 }
 
 /**
