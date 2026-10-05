@@ -76,11 +76,20 @@ final readonly class SsrfResult {
 	/**
 	 * The `host:port:ip` triple curl wants for connection pinning.
 	 *
+	 * An IPv6 address is bracketed — `example.com:443:[2001:db8::1]` — which
+	 * is the form curl documents for CURLOPT_RESOLVE. Left bare, the colons
+	 * inside the address are the same character that separates the fields,
+	 * and whether a given curl reads the entry the way it was meant is down
+	 * to how forgiving its parser happens to be.
+	 *
 	 * @since 1.0.0
+	 * @since 1.4.0 Brackets an IPv6 address.
 	 *
 	 * @return string
 	 */
 	public function resolve_entry(): string {
-		return $this->host . ':' . $this->port . ':' . $this->ip;
+		$ip = str_contains( $this->ip, ':' ) ? '[' . trim( $this->ip, '[]' ) . ']' : $this->ip;
+
+		return $this->host . ':' . $this->port . ':' . $ip;
 	}
 }

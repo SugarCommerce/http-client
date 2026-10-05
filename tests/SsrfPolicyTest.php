@@ -157,6 +157,18 @@ final class SsrfPolicyTest extends TestCase {
 		$this->assertSame( '127.0.0.1:8080:127.0.0.1', $result->resolve_entry() );
 	}
 
+	/**
+	 * curl documents an IPv6 address in a resolve entry as bracketed. Bare,
+	 * its colons are the field separator too.
+	 */
+	public function test_an_ipv6_pin_is_bracketed(): void {
+		$result = SsrfPolicy::permissive()->validate( 'http://[::1]:8080/path' );
+
+		$this->assertTrue( $result->ok );
+		$this->assertSame( '::1', $result->ip );
+		$this->assertSame( '[::1]:8080:[::1]', $result->resolve_entry() );
+	}
+
 	public function test_default_ports_are_inferred_from_the_scheme(): void {
 		$policy = SsrfPolicy::permissive();
 
