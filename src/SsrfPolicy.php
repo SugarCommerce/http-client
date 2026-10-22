@@ -144,13 +144,24 @@ final readonly class SsrfPolicy {
 	 * Validate a URL and resolve it to a pinned address.
 	 *
 	 * @since 1.0.0
-	 * @since 1.5.0 Refuses a host that is not a plain hostname or IP literal.
+	 * @since 1.5.0 Refuses a host that is not a plain hostname or IP literal,
+	 *              and a URL with whitespace or a control character in it.
 	 *
 	 * @param string $url Candidate URL.
 	 *
 	 * @return SsrfResult Success carries the address to pin to.
 	 */
 	public function validate( string $url ): SsrfResult {
+		// parse_url() turns a control character in a host into an
+		// underscore, which a hostname may contain, so
+		// `http://example.com\n/` was checked as `example.com_` — a name
+		// nobody asked for, and not the URL curl is handed. No valid URL
+		// contains whitespace or a control character anywhere; refuse it
+		// before it is parsed at all.
+		if ( 1 === preg_match( '/[\x00-\x20\x7F]/', $url ) ) {
+			return SsrfResult::rejected( 'URL contains whitespace or a control character.' );
+		}
+
 		$parts = parse_url( $url );
 
 		if ( false === $parts || ! isset( $parts['host'] ) ) {
@@ -327,12 +338,16 @@ final readonly class SsrfPolicy {
 	 * Whether a URL host is spelled the way a resolver and curl agree on.
 	 *
 	 * Letters, digits, hyphens, dots and underscores, or a bracketed IPv6
-	 * literal. Anything else is where parsers part company: curl decodes
-	 * `%2e` in a host into a dot, parse_url() does not, so the name that was
-	 * checked and the name that is connected to are two different names, and
-	 * the connection is no longer pinned to anything. A zone index
-	 * (`[fe80::1%25en0]`) and a raw Unicode name are refused for the same
-	 * reason; convert an internationalised name to its `xn--` form first.
+	 * literal. An underscore is not valid in a hostname under RFC 952 and
+	 * 1123 but turns up in real DNS names, so it stays; it is also what
+	 * parse_url() makes of a control character, which is why validate()
+	 * refuses those before parsing. Anything else is where parsers part
+	 * company: curl decodes `%2e` in a host into a dot, parse_url() does
+	 * not, so the name that was checked and the name that is connected to
+	 * are two different names, and the connection is no longer pinned to
+	 * anything. A zone index (`[fe80::1%25en0]`) and a raw Unicode name are
+	 * refused for the same reason; convert an internationalised name to its
+	 * `xn--` form first.
 	 *
 	 * @since 1.5.0
 	 *

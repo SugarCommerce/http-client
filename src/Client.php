@@ -382,6 +382,14 @@ readonly class Client {
 		for ( $hop = 0; $hop <= $this->max_redirects; $hop++ ) {
 			$pinned = null;
 
+			// Whitespace or a control character is never part of a valid
+			// URL, and parse_url() and curl each read one differently. The
+			// policy refuses it too; this holds with the guard off as well,
+			// for the first URL and every Location after it.
+			if ( 1 === preg_match( '/[\x00-\x20\x7F]/', $current ) ) {
+				return Response::failure( 'blocked: URL contains whitespace or a control character.' );
+			}
+
 			if ( null !== $this->ssrf ) {
 				$check = $this->ssrf->validate( $current );
 

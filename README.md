@@ -153,6 +153,7 @@ A request is answered by the first matching route with uses left, then the next 
 | IPv6 transition | NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`, 6to4 `2002::/16`, Teredo, SIIT `::ffff:0:0:0/96` |
 | Special-purpose | documentation, benchmarking, multicast, `240.0.0.0/4`, site-local `fec0::/10` |
 | Unplain hosts | `169%2e254%2e169%2e254`, `[fe80::1%25en0]`, raw Unicode — parsers disagree on them |
+| Whitespace, control characters | `http://example.com\n/`, which `parse_url()` reads as host `example.com_` — refused anywhere in the URL, before parsing, guard on or off |
 | Non-HTTP schemes | `file://`, `gopher://`, `dict://` |
 | Credentials in URL | `http://real.com@internal/` |
 | Non-HTTP ports | `:22`, `:3306`, `:6379`, `:11211` |

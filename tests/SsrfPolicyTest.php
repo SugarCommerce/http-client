@@ -131,8 +131,56 @@ final class SsrfPolicyTest extends TestCase {
 			'percent-encoded'     => array( 'http://local%68ost/' ),
 			'zone index'          => array( 'http://[fe80::1%25en0]/' ),
 			'unicode'             => array( 'http://exämple.com/' ),
-			'space'               => array( 'http://example.com /' ),
 		);
+	}
+
+	/**
+	 * parse_url() turns a control character in a host into an underscore,
+	 * and an underscore is allowed in a host, so `http://example.com\n/`
+	 * was validated as `example.com_`. Whitespace and control characters
+	 * are refused anywhere in the URL, before it is parsed.
+	 */
+	#[DataProvider( 'unsafe_character_urls' )]
+	public function test_a_url_with_whitespace_or_a_control_character_is_refused( string $url ): void {
+		$result = SsrfPolicy::permissive()->validate( $url );
+
+		$this->assertFalse( $result->ok );
+		$this->assertSame( 'URL contains whitespace or a control character.', $result->error );
+	}
+
+	/** @return array<string, array{0: string}> */
+	public static function unsafe_character_urls(): array {
+		return array(
+			'newline in host'   => array( "http://example.com\n/" ),
+			'return in host'    => array( "http://example.com\r/" ),
+			'tab in host'       => array( "http://example.com\t/" ),
+			'nul in host'       => array( "http://example.com\0/" ),
+			'delete in host'    => array( "http://example.com\x7F/" ),
+			'unit sep in host'  => array( "http://example.com\x1F/" ),
+			'space in host'     => array( 'http://exa mple.com/' ),
+			'space before path' => array( 'http://example.com /' ),
+			'newline in path'   => array( "http://example.com/a\nb" ),
+			'return in path'    => array( "http://example.com/a\r\nHost: internal" ),
+			'tab in path'       => array( "http://example.com/a\tb" ),
+			'nul in path'       => array( "http://example.com/a\0b" ),
+			'space in path'     => array( 'http://example.com/a b' ),
+			'space in query'    => array( 'http://example.com/?q=a b' ),
+			'trailing newline'  => array( "http://example.com/\n" ),
+			'leading space'     => array( ' http://example.com/' ),
+			'loopback newline'  => array( "http://127.0.0.1\n/" ),
+		);
+	}
+
+	/**
+	 * An underscore is not valid in a hostname under RFC 952 and 1123, but
+	 * real DNS names carry one, so it is still a plain host. The refusal
+	 * above is what keeps a control character from arriving as one.
+	 */
+	public function test_an_underscore_in_a_host_is_still_plain(): void {
+		$is_plain = new \ReflectionMethod( SsrfPolicy::class, 'is_plain_host' );
+
+		$this->assertTrue( $is_plain->invoke( null, '_dmarc.example.com' ) );
+		$this->assertTrue( $is_plain->invoke( null, 'my_host.example.com' ) );
 	}
 
 	/**

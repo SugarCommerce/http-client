@@ -19,6 +19,7 @@ namespace SugarCommerce\HttpClient\Tests;
 
 use PHPUnit\Framework\Attributes\AfterClass;
 use PHPUnit\Framework\Attributes\BeforeClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SugarCommerce\HttpClient\Client;
 use SugarCommerce\HttpClient\SsrfPolicy;
@@ -266,6 +267,40 @@ final class ClientTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 
 		$this->client()->request( "GET\n", $this->url( 'echo.php' ) );
+	}
+
+	/**
+	 * parse_url() reads `example.com\n` as `example.com_`, curl reads it as
+	 * something else again. The request is refused before either does,
+	 * with the guard on or off.
+	 */
+	#[DataProvider( 'unsafe_character_paths' )]
+	public function test_a_url_with_whitespace_or_a_control_character_is_never_sent( string $path ): void {
+		foreach ( array( $this->client(), ( new Client() )->without_ssrf() ) as $client ) {
+			$response = $client->get( $this->url( $path ) );
+
+			$this->assertFalse( $response->ok );
+			$this->assertSame( 0, $response->status );
+			$this->assertSame( 'blocked: URL contains whitespace or a control character.', $response->error );
+		}
+	}
+
+	/** @return array<string, array{0: string}> */
+	public static function unsafe_character_paths(): array {
+		return array(
+			'newline' => array( "echo.php\n" ),
+			'return'  => array( "echo.php?a=1\r\nX-Injected: 1" ),
+			'tab'     => array( "echo.php\tx" ),
+			'nul'     => array( "echo.php\0" ),
+			'space'   => array( 'echo.php?msg=a b' ),
+		);
+	}
+
+	public function test_a_host_with_a_control_character_is_never_sent(): void {
+		$response = ( new Client() )->get( "http://example.com\n/" );
+
+		$this->assertFalse( $response->ok );
+		$this->assertSame( 'blocked: URL contains whitespace or a control character.', $response->error );
 	}
 
 	public function test_a_user_agent_with_a_line_break_is_refused(): void {
