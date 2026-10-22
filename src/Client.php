@@ -375,7 +375,7 @@ readonly class Client {
 
 		// A verb goes onto the request line as it is. One with a space or a
 		// line break in it writes a second request of the caller's choosing.
-		if ( 1 !== preg_match( '/^[!#$%&\'*+.^_`|~0-9A-Z-]+$/', $method ) ) {
+		if ( 1 !== preg_match( '/^[!#$%&\'*+.^_`|~0-9A-Z-]+$/D', $method ) ) {
 			throw new \InvalidArgumentException( 'Not an HTTP method: ' . var_export( $method, true ) );
 		}
 

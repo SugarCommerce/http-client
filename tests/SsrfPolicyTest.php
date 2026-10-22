@@ -135,6 +135,28 @@ final class SsrfPolicyTest extends TestCase {
 		);
 	}
 
+	/**
+	 * parse_url() turns a control character into an underscore, so
+	 * validate() does not hand this check a newline today. It must hold on
+	 * its own all the same, and `$` also matches just before a final
+	 * newline.
+	 */
+	#[DataProvider( 'newline_hosts' )]
+	public function test_a_host_ending_in_a_newline_is_not_plain( string $host ): void {
+		$is_plain = new \ReflectionMethod( SsrfPolicy::class, 'is_plain_host' );
+
+		$this->assertFalse( $is_plain->invoke( null, $host ) );
+		$this->assertTrue( $is_plain->invoke( null, rtrim( $host ) ) );
+	}
+
+	/** @return array<string, array{0: string}> */
+	public static function newline_hosts(): array {
+		return array(
+			'name'         => array( "example.com\n" ),
+			'ipv6 literal' => array( "[2606:4700:4700::1111]\n" ),
+		);
+	}
+
 		/* ─── Port allowlist ────────────────────────────────────────────── */
 
 	/**

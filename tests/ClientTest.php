@@ -258,6 +258,16 @@ final class ClientTest extends TestCase {
 		$this->client()->request( "GET / HTTP/1.1\r\nHost: internal\r\n\r\nGET", $this->url( 'echo.php' ) );
 	}
 
+	/**
+	 * `$` also matches just before a final newline, so a verb ending in one
+	 * passed the token check and put a line break in the request line.
+	 */
+	public function test_a_method_ending_in_a_newline_is_refused(): void {
+		$this->expectException( \InvalidArgumentException::class );
+
+		$this->client()->request( "GET\n", $this->url( 'echo.php' ) );
+	}
+
 	public function test_a_user_agent_with_a_line_break_is_refused(): void {
 		$this->expectException( \InvalidArgumentException::class );
 

@@ -342,10 +342,10 @@ final readonly class SsrfPolicy {
 	 */
 	private static function is_plain_host( string $host ): bool {
 		if ( str_starts_with( $host, '[' ) ) {
-			return 1 === preg_match( '/^\[[0-9a-f:.]+\]$/i', $host )
+			return 1 === preg_match( '/^\[[0-9a-f:.]+\]$/iD', $host )
 				&& false !== filter_var( substr( $host, 1, -1 ), FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 );
 		}
 
-		return 1 === preg_match( '/^[a-z0-9_.-]{1,253}$/i', $host );
+		return 1 === preg_match( '/^[a-z0-9_.-]{1,253}$/iD', $host );
 	}
 }
