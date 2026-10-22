@@ -44,6 +44,21 @@ final class SsrfPolicyTest extends TestCase {
 			'ipv4-mapped meta'    => array( '::ffff:169.254.169.254' ),
 			'nat64'               => array( '64:ff9b::a00:1' ),
 			'6to4'                => array( '2002:0a00:0001::' ),
+			'nat64 leading zeros' => array( '0064:ff9b::a9fe:a9fe' ),
+			'nat64 local-use'     => array( '64:ff9b:1::a9fe:a9fe' ),
+			'ipv4-mapped hex'     => array( '::ffff:a9fe:a9fe' ),
+			'ipv4-translated'     => array( '::ffff:0:a9fe:a9fe' ),
+			'ipv4-compatible'     => array( '::a9fe:a9fe' ),
+			'teredo'              => array( '2001::5ef5:79fd' ),
+			'ipv6 documentation'  => array( '2001:db8::1' ),
+			'ipv6 site-local'     => array( 'fec0::1' ),
+			'ipv6 multicast'      => array( 'ff02::1' ),
+			'ipv6 discard'        => array( '100::1' ),
+			'ietf protocol'       => array( '192.0.0.170' ),
+			'benchmarking'        => array( '198.18.0.1' ),
+			'documentation'       => array( '203.0.113.7' ),
+			'multicast'           => array( '224.0.0.1' ),
+			'broadcast'           => array( '255.255.255.255' ),
 			'not an ip'           => array( 'not-an-ip' ),
 			'empty'               => array( '' ),
 		);
@@ -63,6 +78,7 @@ final class SsrfPolicyTest extends TestCase {
 			'just above cgnat' => array( '100.128.0.1' ),
 			'just below cgnat' => array( '100.63.255.255' ),
 			'ipv6 public'     => array( '2606:4700:4700::1111' ),
+			'mapped public'   => array( '::ffff:8.8.8.8' ),
 		);
 	}
 
@@ -88,11 +104,38 @@ final class SsrfPolicyTest extends TestCase {
 			'metadata service' => array( 'http://169.254.169.254/latest/meta-data/' ),
 			'private literal'  => array( 'http://10.0.0.1/' ),
 			'ipv6 loopback'    => array( 'http://[::1]/' ),
+			'mapped metadata'  => array( 'http://[::ffff:a9fe:a9fe]/' ),
+			'nat64 metadata'   => array( 'http://[0064:ff9b::a9fe:a9fe]/' ),
 			'empty'            => array( '' ),
 		);
 	}
 
-	/* ─── Port allowlist ────────────────────────────────────────────── */
+	/**
+	 * curl decodes `%2e` in a host to a dot and parse_url() does not, so a
+	 * host spelled that way is checked as one name and connected to as
+	 * another. Anything outside a plain hostname is refused before it is
+	 * resolved.
+	 */
+	#[DataProvider( 'unplain_hosts' )]
+	public function test_a_host_parsers_disagree_on_is_refused( string $url ): void {
+		$result = SsrfPolicy::permissive()->validate( $url );
+
+		$this->assertFalse( $result->ok );
+		$this->assertStringContainsString( 'not a valid hostname', $result->error );
+	}
+
+	/** @return array<string, array{0: string}> */
+	public static function unplain_hosts(): array {
+		return array(
+			'percent-encoded dot' => array( 'http://169%2e254%2e169%2e254/' ),
+			'percent-encoded'     => array( 'http://local%68ost/' ),
+			'zone index'          => array( 'http://[fe80::1%25en0]/' ),
+			'unicode'             => array( 'http://exämple.com/' ),
+			'space'               => array( 'http://example.com /' ),
+		);
+	}
+
+		/* ─── Port allowlist ────────────────────────────────────────────── */
 
 	/**
 	 * A public IP on port 6379 is still somebody's Redis. HTTP request

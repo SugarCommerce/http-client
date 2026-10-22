@@ -75,9 +75,26 @@ final readonly class Fake extends Client {
 	public function __construct( private ?Response $otherwise = new Response( true, 200 ) ) {
 		parent::__construct( ssrf: null );
 
-		$this->requests = new \ArrayObject();
-		$this->routes   = new \ArrayObject();
-		$this->queued   = new \ArrayObject();
+		[ $this->requests, $this->routes, $this->queued ] = self::blank();
+	}
+
+	/**
+	 * An empty request log, route table and queue.
+	 *
+	 * Built here, under a return type that says what each holds, because a
+	 * bare `new \ArrayObject()` assigned in the constructor is remembered by
+	 * static analysis as an object that holds nothing, ever.
+	 *
+	 * @since 1.5.0
+	 *
+	 * @return array{
+	 *     0: \ArrayObject<int, array{method: string, url: string, body: string|null, headers: array<string, string>}>,
+	 *     1: \ArrayObject<int, array{0: string, 1: string, 2: Response|\Closure, 3: int|null}>,
+	 *     2: \ArrayObject<int, Response>
+	 * }
+	 */
+	private static function blank(): array {
+		return array( new \ArrayObject(), new \ArrayObject(), new \ArrayObject() );
 	}
 
 	/**
@@ -144,7 +161,7 @@ final readonly class Fake extends Client {
 	 * @param string $method HTTP verb, or '*' for any.
 	 * @param string $url    URL glob.
 	 *
-	 * @return array<int, array{method: string, url: string, body: string|null, headers: array<string, string>}>
+	 * @return list<array{method: string, url: string, body: string|null, headers: array<string, string>}>
 	 */
 	public function sent( string $method = '*', string $url = '*' ): array {
 		return array_values( array_filter(
@@ -158,7 +175,7 @@ final readonly class Fake extends Client {
 	 *
 	 * @since 1.2.0
 	 *
-	 * @return string[]
+	 * @return list<string>
 	 */
 	public function methods(): array {
 		return array_column( $this->requests->getArrayCopy(), 'method' );
@@ -180,6 +197,9 @@ final readonly class Fake extends Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \UnexpectedValueException When a route's closure answers with
+	 *                                   something other than a Response.
 	 */
 	#[\Override]
 	public function request( string $method, string $url, ?string $body = null, array $headers = array() ): Response {
@@ -191,6 +211,10 @@ final readonly class Fake extends Client {
 
 		if ( $answer instanceof \Closure ) {
 			$answer = $answer( $method, $url, $body, $headers );
+
+			if ( ! $answer instanceof Response ) {
+				throw new \UnexpectedValueException( 'A route for ' . $method . ' ' . $url . ' answered with something other than a Response.' );
+			}
 		}
 
 		return $answer ?? Response::failure( 'unscripted: ' . $method . ' ' . $url );

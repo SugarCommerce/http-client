@@ -52,6 +52,15 @@ readonly class Client {
 	private const int KEPT = 65536;
 
 	/**
+	 * Request headers that carry credentials, lowercase.
+	 *
+	 * Dropped from a request the moment a redirect leaves the origin it was
+	 * sent to, so an API token meant for one host is never handed to a host
+	 * that host pointed at.
+	 */
+	private const array CREDENTIALS = array( 'authorization', 'proxy-authorization', 'cookie' );
+
+	/**
 	 * @since 1.0.0
 	 *
 	 * @param int                   $timeout         Seconds, connect and total.
@@ -175,6 +184,8 @@ readonly class Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a header containing CR, LF or NUL.
 	 */
 	public function get( string $url, array $headers = array() ): Response {
 		return $this->request( 'GET', $url, null, $headers );
@@ -190,6 +201,8 @@ readonly class Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a header containing CR, LF or NUL.
 	 */
 	public function post( string $url, string $body, array $headers = array() ): Response {
 		return $this->request( 'POST', $url, $body, $headers );
@@ -205,6 +218,8 @@ readonly class Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a header containing CR, LF or NUL.
 	 */
 	public function post_json( string $url, mixed $data, array $headers = array() ): Response {
 		return $this->request(
@@ -225,6 +240,8 @@ readonly class Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a header containing CR, LF or NUL.
 	 */
 	public function put( string $url, string $body, array $headers = array() ): Response {
 		return $this->request( 'PUT', $url, $body, $headers );
@@ -239,6 +256,8 @@ readonly class Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a header containing CR, LF or NUL.
 	 */
 	public function delete( string $url, array $headers = array() ): Response {
 		return $this->request( 'DELETE', $url, null, $headers );
@@ -253,6 +272,8 @@ readonly class Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a header containing CR, LF or NUL.
 	 */
 	public function head( string $url, array $headers = array() ): Response {
 		return $this->request( 'HEAD', $url, null, $headers );
@@ -290,6 +311,8 @@ readonly class Client {
 	 *                  including partway through — by then the sink has had
 	 *                  some of the bytes, and the caller decides what a
 	 *                  partial body means.
+	 *
+	 * @throws \InvalidArgumentException On a header containing CR, LF or NUL.
 	 */
 	public function stream( string $url, \Closure $sink, array $headers = array() ): Response {
 		return $this->send( 'GET', $url, null, $headers, $sink );
@@ -312,6 +335,9 @@ readonly class Client {
 	 * @param array<string, string> $headers Extra headers.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a verb that is not an HTTP token,
+	 *                                   or a header containing CR, LF or NUL.
 	 */
 	public function request( string $method, string $url, ?string $body = null, array $headers = array() ): Response {
 		return $this->send( $method, $url, $body, $headers, null );
@@ -320,7 +346,13 @@ readonly class Client {
 	/**
 	 * Perform a request, keeping the body or handing it to a sink.
 	 *
+	 * A hop that leaves the origin of the first request — another scheme,
+	 * host or port — loses the `Authorization`, `Proxy-Authorization` and
+	 * `Cookie` headers, for the rest of the chain. The headers were meant
+	 * for the first host; the next one is wherever that host said to go.
+	 *
 	 * @since 1.4.0
+	 * @since 1.5.0 Drops credential headers on a cross-origin redirect.
 	 *
 	 * @param string                $method  HTTP verb.
 	 * @param string                $url     URL.
@@ -330,11 +362,22 @@ readonly class Client {
 	 *                                       or null to keep it.
 	 *
 	 * @return Response
+	 *
+	 * @throws \InvalidArgumentException On a verb that is not an HTTP token,
+	 *                                   or a header containing CR, LF or NUL.
 	 */
 	private function send( string $method, string $url, ?string $body, array $headers, ?\Closure $sink ): Response {
 		$method  = strtoupper( $method );
 		$current = $url;
 		$started = microtime( true );
+		$headers = $headers + $this->default_headers;
+		$origin  = self::origin( $url );
+
+		// A verb goes onto the request line as it is. One with a space or a
+		// line break in it writes a second request of the caller's choosing.
+		if ( 1 !== preg_match( '/^[!#$%&\'*+.^_`|~0-9A-Z-]+$/', $method ) ) {
+			throw new \InvalidArgumentException( 'Not an HTTP method: ' . var_export( $method, true ) );
+		}
 
 		for ( $hop = 0; $hop <= $this->max_redirects; $hop++ ) {
 			$pinned = null;
@@ -363,6 +406,10 @@ readonly class Client {
 				}
 
 				$current = $result['location'];
+
+				if ( self::origin( $current ) !== $origin ) {
+					$headers = self::without_credentials( $headers );
+				}
 
 				// Only the first request carries a body; a 303, and in
 				// practice a 301/302 too, becomes a GET.
@@ -416,16 +463,31 @@ readonly class Client {
 	/**
 	 * Issue one request, following nothing.
 	 *
-	 * @since 1.0.0
+	 * When guarded, the connection is pinned to the validated address and
+	 * checked against it once it is open: should curl have read the URL's
+	 * host differently from the policy, and so looked the name up itself,
+	 * the request is abandoned before a byte of it is sent. A guarded
+	 * request never goes through a proxy, which would look the name up all
+	 * over again on its own side.
 	 *
-	 * @param string                $method  Verb.
-	 * @param string                $url     URL.
-	 * @param string|null           $body    Body.
-	 * @param array<string, string> $headers Extra headers.
-	 * @param SsrfResult|null       $pinned  Validated target, when guarded.
-	 * @param \Closure|null         $sink    Receives a 2xx body as it arrives.
+	 * TLS certificates and host names are always verified; there is no
+	 * switch to turn that off.
+	 *
+	 * @since 1.0.0
+	 * @since 1.5.0 Checks the connected address against the pin, never uses a
+	 *              proxy when guarded, and takes the headers already merged.
+	 *
+	 * @param non-empty-string          $method  Verb.
+	 * @param string                    $url     URL.
+	 * @param string|null               $body    Body.
+	 * @param array<int|string, string> $headers Every header to send.
+	 * @param SsrfResult|null           $pinned  Validated target, when guarded.
+	 * @param \Closure|null             $sink    Receives a 2xx body as it arrives.
 	 *
 	 * @return array{status:int, body:string|false, content_type:string, error:string, location:string, headers:array<string,string>}
+	 *
+	 * @throws \InvalidArgumentException On a header or user agent containing
+	 *                                   CR, LF or NUL.
 	 */
 	private function execute( string $method, string $url, ?string $body, array $headers, ?SsrfResult $pinned, ?\Closure $sink = null ): array {
 		$handle           = curl_init( $url );
@@ -438,11 +500,12 @@ readonly class Client {
 			CURLOPT_FOLLOWLOCATION  => false,
 			CURLOPT_TIMEOUT         => $this->timeout,
 			CURLOPT_CONNECTTIMEOUT  => $this->timeout,
-			CURLOPT_USERAGENT       => $this->user_agent,
 			CURLOPT_PROTOCOLS       => self::PROTOCOLS,
 			CURLOPT_REDIR_PROTOCOLS => self::PROTOCOLS,
+			CURLOPT_SSL_VERIFYPEER  => true,
+			CURLOPT_SSL_VERIFYHOST  => 2,
 			CURLOPT_NOBODY          => 'HEAD' === $method,
-			CURLOPT_HEADERFUNCTION  => static function ( $handle, string $line ) use ( &$response_headers ): int {
+			CURLOPT_HEADERFUNCTION  => static function ( \CurlHandle $handle, string $line ) use ( &$response_headers ): int {
 				$parts = explode( ':', $line, 2 );
 
 				if ( 2 === count( $parts ) ) {
@@ -453,10 +516,16 @@ readonly class Client {
 			},
 		);
 
-		$merged = $headers + $this->default_headers;
+		if ( '' !== $this->user_agent ) {
+			if ( 1 === preg_match( '/[\r\n\x00]/', $this->user_agent ) ) {
+				throw new \InvalidArgumentException( 'User agent contains a line break.' );
+			}
 
-		if ( array() !== $merged ) {
-			$options[ CURLOPT_HTTPHEADER ] = self::normalize_headers( $merged );
+			$options[ CURLOPT_USERAGENT ] = $this->user_agent;
+		}
+
+		if ( array() !== $headers ) {
+			$options[ CURLOPT_HTTPHEADER ] = self::normalize_headers( $headers );
 		}
 
 		if ( null !== $body && '' !== $body ) {
@@ -467,6 +536,16 @@ readonly class Client {
 			// Pin the connection to the address the policy validated, so
 			// a second DNS answer cannot redirect us somewhere private.
 			$options[ CURLOPT_RESOLVE ] = array( $pinned->resolve_entry() );
+			$options[ CURLOPT_PROXY ]   = '';
+
+			// And make sure it was. curl reads some URLs differently from
+			// parse_url(), and a host it reads differently is a host it
+			// resolves for itself, past the pin. Called once the connection
+			// is up and before the request is written.
+			$want = inet_pton( trim( $pinned->ip, '[]' ) );
+
+			$options[ CURLOPT_PREREQFUNCTION ] = static fn ( \CurlHandle $handle, string $primary_ip ): int
+				=> false !== $want && inet_pton( $primary_ip ) === $want ? CURL_PREREQFUNC_OK : CURL_PREREQFUNC_ABORT;
 		}
 
 		if ( null !== $sink ) {
@@ -476,7 +555,7 @@ readonly class Client {
 			$options[ CURLOPT_TIMEOUT ]         = 0;
 			$options[ CURLOPT_LOW_SPEED_LIMIT ] = 1;
 			$options[ CURLOPT_LOW_SPEED_TIME ]  = max( 1, $this->timeout );
-			$options[ CURLOPT_WRITEFUNCTION ]   = static function ( $handle, string $chunk ) use ( $sink, &$kept ): int {
+			$options[ CURLOPT_WRITEFUNCTION ]   = static function ( \CurlHandle $handle, string $chunk ) use ( $sink, &$kept ): int {
 				$status = (int) curl_getinfo( $handle, CURLINFO_RESPONSE_CODE );
 
 				if ( $status >= 200 && $status < 300 ) {
@@ -495,7 +574,7 @@ readonly class Client {
 			// Abort mid-transfer rather than buffering an oversized body
 			// and checking its length afterwards.
 			$options[ CURLOPT_NOPROGRESS ]       = false;
-			$options[ CURLOPT_PROGRESSFUNCTION ] = fn( $handle, int $download_total, int $downloaded ): int
+			$options[ CURLOPT_PROGRESSFUNCTION ] = fn( \CurlHandle $handle, int $download_total, int $downloaded ): int
 				=> ( $downloaded > $this->max_bytes || $download_total > $this->max_bytes ) ? 1 : 0;
 		}
 
@@ -521,6 +600,52 @@ readonly class Client {
 	}
 
 	/**
+	 * The origin of a URL: scheme, host and port, lowercase.
+	 *
+	 * @since 1.5.0
+	 *
+	 * @param string $url URL.
+	 *
+	 * @return string `scheme://host:port`, or '' when it does not parse.
+	 */
+	private static function origin( string $url ): string {
+		$parts = parse_url( $url );
+
+		if ( false === $parts || ! isset( $parts['host'] ) ) {
+			return '';
+		}
+
+		$scheme = strtolower( $parts['scheme'] ?? '' );
+		$port   = $parts['port'] ?? ( 'https' === $scheme ? 443 : 80 );
+
+		return $scheme . '://' . strtolower( $parts['host'] ) . ':' . $port;
+	}
+
+	/**
+	 * Headers with every credential-bearing one taken out.
+	 *
+	 * Handles both forms normalize_headers() accepts: `Name => value` and a
+	 * preformatted `Name: value` line.
+	 *
+	 * @since 1.5.0
+	 *
+	 * @param array<int|string, string> $headers Headers.
+	 *
+	 * @return array<int|string, string>
+	 */
+	private static function without_credentials( array $headers ): array {
+		return array_filter(
+			$headers,
+			static function ( string $value, int|string $name ): bool {
+				$name = is_int( $name ) ? explode( ':', $value, 2 )[0] : $name;
+
+				return ! in_array( strtolower( trim( $name ) ), self::CREDENTIALS, true );
+			},
+			ARRAY_FILTER_USE_BOTH
+		);
+	}
+
+	/**
 	 * Convert headers to curl's `Name: value` list.
 	 *
 	 * Accepts an associative map or an already-formatted list. Values
@@ -531,7 +656,7 @@ readonly class Client {
 	 *
 	 * @param array<int|string, string> $headers Headers.
 	 *
-	 * @return string[]
+	 * @return list<string>
 	 *
 	 * @throws \InvalidArgumentException On a header containing CR or LF.
 	 */
@@ -539,7 +664,7 @@ readonly class Client {
 		$out = array();
 
 		foreach ( $headers as $name => $value ) {
-			$line = is_int( $name ) ? (string) $value : $name . ': ' . $value;
+			$line = is_int( $name ) ? $value : $name . ': ' . $value;
 
 			if ( 1 === preg_match( '/[\r\n\x00]/', $line ) ) {
 				throw new \InvalidArgumentException( 'Header contains a line break: ' . var_export( $name, true ) );

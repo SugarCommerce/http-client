@@ -116,6 +116,10 @@ new SsrfPolicy( allowed_ports: [ 80, 443, 8080 ] );
 SsrfPolicy::permissive();   // private addresses + any port — dev and tests only
 ```
 
+### Redirects and credentials
+
+A redirect that leaves the origin of the first request — another scheme, host or port — loses `Authorization`, `Proxy-Authorization` and `Cookie` for the rest of the chain. Any other header carrying a secret (an `X-Api-Key`, say) is not recognised as one, so don't combine it with `following_redirects()` towards a host you don't control.
+
 ### Faking it in tests
 
 `Fake` extends `Client`, so anything that takes a client takes it. It never touches the network and records every request.
@@ -146,7 +150,9 @@ A request is answered by the first matching route with uses left, then the next 
 | CGNAT | `100.64.0.0/10` |
 | IPv6 private | `fd00::/8`, `fe80::/10` |
 | IPv4-mapped | `::ffff:10.0.0.1` |
-| IPv6 transition | NAT64 `64:ff9b::/96`, 6to4 `2002::/16` |
+| IPv6 transition | NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`, 6to4 `2002::/16`, Teredo, SIIT `::ffff:0:0:0/96` |
+| Special-purpose | documentation, benchmarking, multicast, `240.0.0.0/4`, site-local `fec0::/10` |
+| Unplain hosts | `169%2e254%2e169%2e254`, `[fe80::1%25en0]`, raw Unicode — parsers disagree on them |
 | Non-HTTP schemes | `file://`, `gopher://`, `dict://` |
 | Credentials in URL | `http://real.com@internal/` |
 | Non-HTTP ports | `:22`, `:3306`, `:6379`, `:11211` |
@@ -157,7 +163,9 @@ Three of those are worth calling out because they're routinely missed:
 
 **NAT64 and 6to4 embed IPv4 inside IPv6.** `64:ff9b::a00:1` reaches `10.0.0.1`, and PHP's own filters consider it perfectly public.
 
-**Validation alone is not enough.** DNS can answer differently between the check and the connection — that *is* DNS rebinding. The connection is pinned to the validated address via `CURLOPT_RESOLVE` — with an IPv6 address bracketed (`host:443:[2001:db8::1]`), the form curl documents. `SsrfResult::resolve_entry()` builds that entry, so anything else pinning a connection uses the same one rather than its own.
+**Validation alone is not enough.** DNS can answer differently between the check and the connection — that *is* DNS rebinding. The connection is pinned to the validated address via `CURLOPT_RESOLVE` — with an IPv6 address bracketed (`host:443:[2001:db8::1]`), the form curl documents. `SsrfResult::resolve_entry()` builds that entry, so anything else pinning a connection uses the same one rather than its own. Once connected, the address curl actually reached is compared with the pin and the request is abandoned before it is sent if they differ — the backstop for any URL curl reads differently from `parse_url()`. A guarded request never goes through a proxy (`http_proxy` and friends are ignored), because a proxy looks the name up again on its own side.
+
+**Addresses are compared in canonical form.** `0064:ff9b::a9fe:a9fe` and `::ffff:a9fe:a9fe` are the metadata service spelled unusually; the check runs on the binary address, not the text.
 
 ## Testing
 

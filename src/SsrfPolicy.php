@@ -51,14 +51,74 @@ namespace SugarCommerce\HttpClient;
 final readonly class SsrfPolicy {
 
 	/**
+	 * The first twelve bytes of an IPv4-mapped IPv6 address, `::ffff:0:0/96`.
+	 */
+	private const string MAPPED_PREFIX = "\0\0\0\0\0\0\0\0\0\0\xff\xff";
+
+	/**
+	 * IPv4 blocks that are not the public internet.
+	 *
+	 * IANA's special-purpose registry, less nothing: this network, the
+	 * RFC 1918 ranges, carrier-grade NAT, loopback, link-local (the cloud
+	 * metadata service lives at 169.254.169.254), the protocol-assignment
+	 * and documentation blocks, the 6to4 relay anycast, benchmarking,
+	 * multicast and the reserved top of the space.
+	 */
+	private const array BLOCKED_V4 = array(
+		'0.0.0.0/8',
+		'10.0.0.0/8',
+		'100.64.0.0/10',
+		'127.0.0.0/8',
+		'169.254.0.0/16',
+		'172.16.0.0/12',
+		'192.0.0.0/24',
+		'192.0.2.0/24',
+		'192.88.99.0/24',
+		'192.168.0.0/16',
+		'198.18.0.0/15',
+		'198.51.100.0/24',
+		'203.0.113.0/24',
+		'224.0.0.0/4',
+		'240.0.0.0/4',
+	);
+
+	/**
+	 * IPv6 blocks that are not the public internet.
+	 *
+	 * Unspecified, loopback and the deprecated IPv4-compatible form (all of
+	 * `::/96`), SIIT's IPv4-translated form, NAT64 (both the well-known and
+	 * the local-use prefix), discard-only, the IETF protocol assignments
+	 * (Teredo among them), documentation, 6to4, segment-routing, unique
+	 * local, link-local, the retired site-local block and multicast. NAT64,
+	 * 6to4, Teredo and SIIT carry an IPv4 address inside, so they reach
+	 * `10.x` from an address PHP's own filters call public.
+	 */
+	private const array BLOCKED_V6 = array(
+		'::/96',
+		'::ffff:0:0:0/96',
+		'64:ff9b::/96',
+		'64:ff9b:1::/48',
+		'100::/64',
+		'2001::/23',
+		'2001:db8::/32',
+		'2002::/16',
+		'3fff::/20',
+		'5f00::/16',
+		'fc00::/7',
+		'fe80::/10',
+		'fec0::/10',
+		'ff00::/8',
+	);
+
+	/**
 	 * @since 1.0.0
 	 *
-	 * @param int[]    $allowed_ports   Ports that may be connected to.
-	 * @param string[] $allowed_schemes URL schemes that may be fetched.
-	 * @param bool     $allow_private   Permit private and loopback
-	 *                                  addresses. For local development
-	 *                                  and tests only — this disables the
-	 *                                  entire point of the class.
+	 * @param list<int>    $allowed_ports   Ports that may be connected to.
+	 * @param list<string> $allowed_schemes URL schemes that may be fetched.
+	 * @param bool         $allow_private   Permit private and loopback
+	 *                                      addresses. For local development
+	 *                                      and tests only — this disables the
+	 *                                      entire point of the class.
 	 */
 	public function __construct(
 		public array $allowed_ports = array( 80, 443 ),
@@ -84,6 +144,7 @@ final readonly class SsrfPolicy {
 	 * Validate a URL and resolve it to a pinned address.
 	 *
 	 * @since 1.0.0
+	 * @since 1.5.0 Refuses a host that is not a plain hostname or IP literal.
 	 *
 	 * @param string $url Candidate URL.
 	 *
@@ -96,7 +157,7 @@ final readonly class SsrfPolicy {
 			return SsrfResult::rejected( 'URL could not be parsed.' );
 		}
 
-		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		$scheme = strtolower( $parts['scheme'] ?? '' );
 
 		if ( ! in_array( $scheme, $this->allowed_schemes, true ) ) {
 			return SsrfResult::rejected( 'Scheme "' . $scheme . '" is not allowed.' );
@@ -108,8 +169,13 @@ final readonly class SsrfPolicy {
 			return SsrfResult::rejected( 'URLs with embedded credentials are not allowed.' );
 		}
 
-		$host = (string) $parts['host'];
-		$port = (int) ( $parts['port'] ?? ( 'https' === $scheme ? 443 : 80 ) );
+		$host = $parts['host'];
+
+		if ( ! self::is_plain_host( $host ) ) {
+			return SsrfResult::rejected( 'Host is not a valid hostname or IP address.' );
+		}
+
+		$port = $parts['port'] ?? ( 'https' === $scheme ? 443 : 80 );
 
 		if ( array() !== $this->allowed_ports && ! in_array( $port, $this->allowed_ports, true ) ) {
 			return SsrfResult::rejected( 'Port ' . $port . ' is not allowed.' );
@@ -143,7 +209,7 @@ final readonly class SsrfPolicy {
 	 *
 	 * @param string $host Hostname or IP literal.
 	 *
-	 * @return string[] Empty on resolution failure.
+	 * @return list<string> Empty on resolution failure.
 	 */
 	public static function resolve( string $host ): array {
 		$host = trim( $host, '[]' );
@@ -163,8 +229,8 @@ final readonly class SsrfPolicy {
 
 		if ( is_array( $aaaa ) ) {
 			foreach ( $aaaa as $record ) {
-				if ( isset( $record['ipv6'] ) ) {
-					$ips[] = (string) $record['ipv6'];
+				if ( isset( $record['ipv6'] ) && is_string( $record['ipv6'] ) ) {
+					$ips[] = $record['ipv6'];
 				}
 			}
 		}
@@ -175,7 +241,15 @@ final readonly class SsrfPolicy {
 	/**
 	 * Whether an address is routable on the public internet.
 	 *
+	 * The address is put into its canonical binary form first, so the same
+	 * host spelled `0064:ff9b::a9fe:a9fe`, `::ffff:a9fe:a9fe` or
+	 * `::ffff:169.254.169.254` meets the same rule as its tidy spelling. A
+	 * URL may carry any of those, and a check that compares text is a check
+	 * on how the attacker chose to write the address.
+	 *
 	 * @since 1.0.0
+	 * @since 1.5.0 Compares canonical binary forms against IANA's
+	 *              special-purpose registries, not PHP's filter flags alone.
 	 *
 	 * @param string $ip IPv4 or IPv6 address.
 	 *
@@ -184,39 +258,94 @@ final readonly class SsrfPolicy {
 	public static function is_public_ip( string $ip ): bool {
 		$ip = trim( $ip, '[]' );
 
-		// An IPv4-mapped IPv6 address reaches the same host as the v4 form,
-		// so normalise before applying the v4 rules.
-		if ( 1 === preg_match( '/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i', $ip, $m ) ) {
-			$ip = $m[1];
-		}
-
 		if ( false === filter_var( $ip, FILTER_VALIDATE_IP ) ) {
 			return false;
 		}
 
-		// NAT64 and 6to4 embed an IPv4 address inside an IPv6 one that
-		// PHP's filters consider perfectly public, which makes them a
-		// route to 10.x that the obvious checks miss.
-		$lower = strtolower( $ip );
+		$packed = inet_pton( $ip );
 
-		if ( str_starts_with( $lower, '64:ff9b:' ) || str_starts_with( $lower, '2002:' ) ) {
+		if ( false === $packed ) {
 			return false;
 		}
 
-		if ( false === filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
-			return false;
+		// An IPv4-mapped IPv6 address reaches the same host as the v4 form,
+		// so it is judged by the v4 rules.
+		if ( 16 === strlen( $packed ) && str_starts_with( $packed, self::MAPPED_PREFIX ) ) {
+			$packed = substr( $packed, 12 );
 		}
 
-		// Carrier-grade NAT (100.64.0.0/10) is absent from PHP's reserved
-		// set but is routinely used for internal infrastructure.
-		if ( false !== filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
-			$long = ip2long( $ip );
-
-			if ( false !== $long && ( $long & 0xFFC00000 ) === ( ip2long( '100.64.0.0' ) & 0xFFC00000 ) ) {
+		foreach ( 4 === strlen( $packed ) ? self::BLOCKED_V4 : self::BLOCKED_V6 as $cidr ) {
+			if ( self::in_cidr( $packed, $cidr ) ) {
 				return false;
 			}
 		}
 
-		return true;
+		// PHP's own idea of private and reserved, as a second opinion.
+		$canonical = (string) inet_ntop( $packed );
+
+		return false !== filter_var( $canonical, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE );
+	}
+
+	/**
+	 * Whether a binary address falls inside a CIDR block.
+	 *
+	 * @since 1.5.0
+	 *
+	 * @param string $packed Address as inet_pton() returns it.
+	 * @param string $cidr   Block, e.g. `10.0.0.0/8` or `fc00::/7`.
+	 *
+	 * @return bool False when the block is of the other family.
+	 */
+	private static function in_cidr( string $packed, string $cidr ): bool {
+		[ $network, $bits ] = explode( '/', $cidr, 2 );
+
+		$base = inet_pton( $network );
+		$bits = (int) $bits;
+
+		if ( false === $base || strlen( $base ) !== strlen( $packed ) ) {
+			return false;
+		}
+
+		$whole = intdiv( $bits, 8 );
+
+		if ( substr( $packed, 0, $whole ) !== substr( $base, 0, $whole ) ) {
+			return false;
+		}
+
+		$rest = $bits % 8;
+
+		if ( 0 === $rest ) {
+			return true;
+		}
+
+		$mask = ( 0xFF << ( 8 - $rest ) ) & 0xFF;
+
+		return ( ord( $packed[ $whole ] ) & $mask ) === ( ord( $base[ $whole ] ) & $mask );
+	}
+
+	/**
+	 * Whether a URL host is spelled the way a resolver and curl agree on.
+	 *
+	 * Letters, digits, hyphens, dots and underscores, or a bracketed IPv6
+	 * literal. Anything else is where parsers part company: curl decodes
+	 * `%2e` in a host into a dot, parse_url() does not, so the name that was
+	 * checked and the name that is connected to are two different names, and
+	 * the connection is no longer pinned to anything. A zone index
+	 * (`[fe80::1%25en0]`) and a raw Unicode name are refused for the same
+	 * reason; convert an internationalised name to its `xn--` form first.
+	 *
+	 * @since 1.5.0
+	 *
+	 * @param string $host Host as parse_url() returned it.
+	 *
+	 * @return bool
+	 */
+	private static function is_plain_host( string $host ): bool {
+		if ( str_starts_with( $host, '[' ) ) {
+			return 1 === preg_match( '/^\[[0-9a-f:.]+\]$/i', $host )
+				&& false !== filter_var( substr( $host, 1, -1 ), FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 );
+		}
+
+		return 1 === preg_match( '/^[a-z0-9_.-]{1,253}$/i', $host );
 	}
 }

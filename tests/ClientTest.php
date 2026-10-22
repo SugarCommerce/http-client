@@ -197,7 +197,73 @@ final class ClientTest extends TestCase {
 		$this->assertStringStartsWith( 'blocked:', $response->error );
 	}
 
+	/**
+	 * A token meant for one host must not be handed to whatever host that
+	 * host redirects to. localhost and 127.0.0.1 are the same server here
+	 * but two origins, which is all the rule looks at.
+	 */
+	public function test_a_cross_origin_redirect_drops_credentials(): void {
+		$to       = 'http://localhost:' . self::$port . '/headers.php';
+		$response = $this->client()
+			->with_headers( array( 'Authorization' => 'Bearer s3cret', 'X-Trace' => 'kept' ) )
+			->following_redirects( 2 )
+			->get( $this->url( 'redirect.php?to=' . rawurlencode( $to ) ), array( 'Cookie' => 'session=s3cret', 'Proxy-Authorization: Basic s3cret' ) );
+
+		$this->assertTrue( $response->ok, $response->error );
+		$this->assertSame( $to, $response->final_url );
+
+		$seen = $response->json();
+
+		$this->assertIsArray( $seen );
+		$this->assertArrayNotHasKey( 'authorization', $seen );
+		$this->assertArrayNotHasKey( 'cookie', $seen );
+		$this->assertArrayNotHasKey( 'proxy-authorization', $seen );
+		$this->assertSame( 'kept', $seen['x-trace'] ?? null );
+	}
+
+	public function test_a_same_origin_redirect_keeps_credentials(): void {
+		$response = $this->client()
+			->with_headers( array( 'Authorization' => 'Bearer s3cret' ) )
+			->following_redirects( 2 )
+			->get( $this->url( 'redirect.php?to=/headers.php' ) );
+
+		$seen = $response->json();
+
+		$this->assertIsArray( $seen );
+		$this->assertSame( 'Bearer s3cret', $seen['authorization'] ?? null );
+	}
+
 	/* ─── SSRF guard ────────────────────────────────────────────────── */
+
+	/**
+	 * Wherever curl reads a host differently from parse_url(), the pin no
+	 * longer applies and curl looks the name up for itself. Simulated here
+	 * by pinning a name that is not the URL's: curl connects to localhost,
+	 * which is not the address the policy approved, and the request has to
+	 * be abandoned before it is sent.
+	 */
+	public function test_a_connection_to_anything_but_the_pinned_address_is_abandoned(): void {
+		$execute = new \ReflectionMethod( Client::class, 'execute' );
+		$pinned  = \SugarCommerce\HttpClient\SsrfResult::allowed( 'http', 'elsewhere.invalid', self::$port, '192.0.2.1' );
+		$result  = $execute->invoke( $this->client(), 'GET', $this->url( 'echo.php' ), null, array(), $pinned, null );
+
+		$this->assertIsArray( $result );
+		$this->assertFalse( $result['body'] );
+		$this->assertSame( 0, $result['status'] );
+	}
+
+	public function test_a_method_that_is_not_a_token_is_refused(): void {
+		$this->expectException( \InvalidArgumentException::class );
+
+		$this->client()->request( "GET / HTTP/1.1\r\nHost: internal\r\n\r\nGET", $this->url( 'echo.php' ) );
+	}
+
+	public function test_a_user_agent_with_a_line_break_is_refused(): void {
+		$this->expectException( \InvalidArgumentException::class );
+
+		( new Client( user_agent: "ua\r\nX-Injected: 1", ssrf: SsrfPolicy::permissive() ) )->get( $this->url( 'echo.php' ) );
+	}
+
 
 	public function test_the_guard_is_on_by_default(): void {
 		$response = ( new Client() )->get( $this->url( 'echo.php' ) );
